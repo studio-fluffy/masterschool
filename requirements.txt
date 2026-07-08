@@ -1,0 +1,7 @@
+# RAG-Tutorial (rag.py) + Observability (observability.py)
+langchain
+langchain-openai
+langchain-community
+faiss-cpu
+python-dotenv
+langfuse

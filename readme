@@ -1,0 +1,10 @@
+.env File
+
+BASE_URL=http://localhost:11434/v1
+OPENAI_API_KEY=ollama
+CHAT_MODEL=qwen2.5:14b
+EMBEDDING_MODEL=bge-m3
+# Langfuse (https://cloud.langfuse.com -> Projekt -> Settings -> API Keys)
+LANGFUSE_PUBLIC_KEY=...
+LANGFUSE_SECRET_KEY=...
+LANGFUSE_HOST=https://cloud.langfuse.com

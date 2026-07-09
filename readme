@@ -13,3 +13,5 @@ LANGFUSE_SECRET_KEY=...
 LANGFUSE_HOST=https://cloud.langfuse.com
 
 
+# Embeddings
+[WordEmbeddingDemoHighDimension](https://www.cs.cmu.edu/~dst/WordEmbeddingDemo/)

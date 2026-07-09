@@ -1,4 +1,7 @@
-.env File
+
+# pip install -r requirements.txt
+
+# .env File
 
 BASE_URL=http://localhost:11434/v1
 OPENAI_API_KEY=ollama
@@ -8,3 +11,5 @@ EMBEDDING_MODEL=bge-m3
 LANGFUSE_PUBLIC_KEY=...
 LANGFUSE_SECRET_KEY=...
 LANGFUSE_HOST=https://cloud.langfuse.com
+
+

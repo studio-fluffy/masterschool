@@ -1,7 +1,10 @@
-# RAG-Tutorial (rag.py) + Observability (observability.py)
+# Abgeleitet aus den Imports aller .py-Dateien und embeddings_rag_demo.ipynb
 openai
+ollama
+pydantic
 faiss-cpu
 langchain-text-splitters
 numpy
 python-dotenv
 langfuse
+sentence-transformers

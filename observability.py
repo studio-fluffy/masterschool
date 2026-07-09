@@ -92,7 +92,7 @@ class SupportBot:
         ):
             while True:
                 anfrage = input("Kunde: ").strip()
-                if anfrage.lower() in ["quit", "exit"]:
+                if anfrage.lower() in ["/quit", "/exit"]:
                     break
 
                 ergebnis = self.beantworte(anfrage)

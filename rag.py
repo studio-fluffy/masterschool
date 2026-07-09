@@ -1,6 +1,9 @@
 """RAG-Tutorial: Ein Kommandozeilen-Q&A-Programm über die Geschichte von RAG.
 
-Das Programm baut die klassische RAG-Pipeline in fünf Schritten auf:
+Das Programm baut die klassische RAG-Pipeline in fünf Schritten auf -
+ohne Framework, nur mit der OpenAI-API, FAISS und NumPy direkt.
+Einzige Ausnahme: das Chunking übernimmt der bewährte Splitter aus dem
+kleinen Standalone-Paket langchain-text-splitters.
 
     1. LADEN      Wissensdokument (rag_geschichte.txt) einlesen
     2. CHUNKING   Dokument in überlappende Textblöcke zerlegen
@@ -19,16 +22,11 @@ import os
 import sys
 
 try:
+    import faiss
+    import numpy as np
     from dotenv import load_dotenv
-
-    # Beim Import erscheint eine Warnung, dass langchain-community abgekündigt
-    # wird. Die FAISS-Integration hat aber (Stand Juli 2026) noch kein
-    # funktionierendes Nachfolgepaket - die Warnung ist hier also unkritisch.
-    from langchain_community.vectorstores import FAISS
-    from langchain_core.output_parsers import StrOutputParser
-    from langchain_core.prompts import ChatPromptTemplate
-    from langchain_openai import ChatOpenAI, OpenAIEmbeddings
     from langchain_text_splitters import RecursiveCharacterTextSplitter
+    from openai import OpenAI
 except ModuleNotFoundError as fehlendes_paket:
     sys.exit(
         f"Fehlendes Paket: {fehlendes_paket.name}\n"
@@ -53,17 +51,19 @@ CHAT_MODEL = os.getenv("CHAT_MODEL", "gpt-4o-mini")
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "text-embedding-3-small")
 
 WISSENSDATEI = os.path.join(os.path.dirname(__file__), "rag_geschichte.txt")
-TOP_K = 3  # Wie viele Textblöcke pro Frage als Kontext verwendet werden.
+TOP_K = 3            # Wie viele Textblöcke pro Frage als Kontext verwendet werden.
+BLOCK_GROESSE = 800  # Zielgröße eines Blocks in Zeichen
+UEBERLAPPUNG = 150   # so viele Zeichen teilen sich zwei Nachbarblöcke
 
 
-def index_aufbauen() -> FAISS:
+def index_aufbauen(client: OpenAI) -> tuple[faiss.Index, list[str]]:
     """Indexierungsphase: Dokument laden, chunken, einbetten, in FAISS ablegen."""
 
     # -----------------------------------------------------------------------
     # Schritt 1: Wissensdokument laden
     # -----------------------------------------------------------------------
-    # Hier eine einfache Textdatei. In echten Projekten übernehmen das die
-    # Document-Loader von LangChain (PDF, HTML, Notion, ...).
+    # Hier eine einfache Textdatei. In echten Projekten kommen an dieser
+    # Stelle Parser für PDF, HTML usw. zum Einsatz.
     with open(WISSENSDATEI, encoding="utf-8") as f:
         text = f.read()
 
@@ -76,68 +76,80 @@ def index_aufbauen() -> FAISS:
     # trennen (erst Absätze, dann Sätze, dann Wörter). Die Überlappung sorgt
     # dafür, dass kein Zusammenhang genau an einer Schnittkante verloren geht.
     splitter = RecursiveCharacterTextSplitter(
-        chunk_size=800,     # Zielgröße eines Blocks in Zeichen
-        chunk_overlap=150,  # so viele Zeichen teilen sich zwei Nachbarblöcke
+        chunk_size=BLOCK_GROESSE,
+        chunk_overlap=UEBERLAPPUNG,
     )
-    chunks = splitter.create_documents([text])
-    print(f"Dokument in {len(chunks)} Blöcke zerlegt.")
+    bloecke = splitter.split_text(text)
+    print(f"Dokument in {len(bloecke)} Blöcke zerlegt.")
 
     # -----------------------------------------------------------------------
     # Schritt 3: Embeddings berechnen und im FAISS-Index speichern
     # -----------------------------------------------------------------------
-    # Das Embedding-Modell wandelt jeden Block in einen Vektor um; semantisch
-    # ähnliche Texte bekommen ähnliche Vektoren. FAISS hält alle Vektoren im
-    # Arbeitsspeicher und kann darin extrem schnell nach Nachbarn suchen.
-    embeddings = OpenAIEmbeddings(
-        model=EMBEDDING_MODEL,
-        base_url=BASE_URL,
-        # OpenAI-fremde Server (z. B. Ollama) erwarten rohen Text statt der
-        # vorab berechneten Token-IDs, die der Client sonst schicken würde.
-        check_embedding_ctx_length=False,
-    )
-    vektorspeicher = FAISS.from_documents(chunks, embeddings)
-    print(f"FAISS-Index mit {vektorspeicher.index.ntotal} Vektoren aufgebaut.\n")
-    return vektorspeicher
+    # Ein einziger API-Aufruf bettet alle Blöcke auf einmal ein. Das
+    # Embedding-Modell wandelt jeden Block in einen Vektor um; semantisch
+    # ähnliche Texte bekommen ähnliche Vektoren.
+    antwort = client.embeddings.create(model=EMBEDDING_MODEL, input=bloecke)
+    vektoren = np.array([d.embedding for d in antwort.data], dtype="float32")
+
+    # IndexFlatL2 ist der einfachste FAISS-Index: Er hält alle Vektoren
+    # unkomprimiert im Arbeitsspeicher und vergleicht per L2-Distanz.
+    # FAISS kennt nur Vektoren und ihre Position (0, 1, 2, ...) - die Texte
+    # selbst merken wir uns daneben in der Liste `bloecke`.
+    index = faiss.IndexFlatL2(vektoren.shape[1])
+    index.add(vektoren)
+    print(f"FAISS-Index mit {index.ntotal} Vektoren aufgebaut.\n")
+    return index, bloecke
 
 
-def frage_beantworten(vektorspeicher: FAISS, llm: ChatOpenAI, frage: str) -> str:
+def frage_beantworten(
+    index: faiss.Index, bloecke: list[str], client: OpenAI, frage: str
+) -> str:
     """Abfragephase: passende Blöcke suchen und daraus eine Antwort erzeugen."""
 
     # -----------------------------------------------------------------------
     # Schritt 4: Retrieval - die ähnlichsten Blöcke zur Frage finden
     # -----------------------------------------------------------------------
     # Die Frage wird mit demselben Embedding-Modell eingebettet, FAISS liefert
-    # die TOP_K nächsten Blöcke. Der Score ist eine L2-Distanz:
-    # KLEINER bedeutet ÄHNLICHER.
-    treffer = vektorspeicher.similarity_search_with_score(frage, k=TOP_K)
+    # die Positionen der TOP_K nächsten Vektoren plus deren Distanzen.
+    # Der Score ist eine L2-Distanz: KLEINER bedeutet ÄHNLICHER.
+    einbettung = client.embeddings.create(model=EMBEDDING_MODEL, input=[frage])
+    frage_vektor = np.array([einbettung.data[0].embedding], dtype="float32")
+    distanzen, positionen = index.search(frage_vektor, min(TOP_K, index.ntotal))
 
     print("  Gefundene Blöcke (Score: kleiner = ähnlicher):")
-    for dokument, score in treffer:
-        vorschau = dokument.page_content.replace("\n", " ")[:80]
+    treffer = []
+    for score, position in zip(distanzen[0], positionen[0]):
+        treffer.append(bloecke[position])
+        vorschau = bloecke[position].replace("\n", " ")[:80]
         print(f"    [{score:.3f}] {vorschau}...")
 
-    kontext = "\n\n---\n\n".join(dokument.page_content for dokument, _ in treffer)
+    kontext = "\n\n---\n\n".join(treffer)
 
     # -----------------------------------------------------------------------
     # Schritt 5: Generation - das Chat-Modell antwortet nur aus dem Kontext
     # -----------------------------------------------------------------------
-    # Das Prompt-Template hat zwei Platzhalter (kontext, frage). Mit dem
-    # |-Operator (LangChain Expression Language) werden Prompt, Modell und
-    # Ausgabe-Parser zu einer Kette verbunden: Die Eingaben füllen das
-    # Template, das Ergebnis geht ans Modell, dessen Antwort wird zu einem
-    # einfachen String.
-    prompt = ChatPromptTemplate.from_messages([
-        (
-            "system",
-            "Du bist ein Tutor für die Geschichte der RAG-Technik. "
-            "Beantworte die Frage AUSSCHLIESSLICH mit dem gelieferten Kontext. "
-            "Steht die Antwort nicht im Kontext, sage das offen. "
-            "Antworte auf Deutsch, kurz und präzise.",
-        ),
-        ("human", "Kontext:\n{kontext}\n\nFrage: {frage}"),
-    ])
-    kette = prompt | llm | StrOutputParser()
-    return kette.invoke({"kontext": kontext, "frage": frage})
+    # Eine Nachrichtenliste und ein einziger API-Aufruf: Die System-Nachricht
+    # legt die Spielregeln fest, die User-Nachricht enthält Kontext und Frage
+    # (per f-String eingesetzt). Der Antworttext steckt in choices[0].
+    antwort = client.chat.completions.create(
+        model=CHAT_MODEL,
+        # temperature=0: möglichst faktentreue, reproduzierbare Antworten -
+        # genau das will man bei Q&A über eine feste Wissensbasis.
+        temperature=0,
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    "Du bist ein Tutor für die Geschichte der RAG-Technik. "
+                    "Beantworte die Frage AUSSCHLIESSLICH mit dem gelieferten "
+                    "Kontext. Steht die Antwort nicht im Kontext, sage das "
+                    "offen. Antworte auf Deutsch, kurz und präzise."
+                ),
+            },
+            {"role": "user", "content": f"Kontext:\n{kontext}\n\nFrage: {frage}"},
+        ],
+    )
+    return antwort.choices[0].message.content
 
 
 def main() -> None:
@@ -148,11 +160,11 @@ def main() -> None:
     if not os.getenv("OPENAI_API_KEY"):
         sys.exit("Fehler: OPENAI_API_KEY fehlt (in der .env-Datei setzen).")
 
-    vektorspeicher = index_aufbauen()
+    # Ein Client für alles: Embeddings UND Chat laufen über denselben Server.
+    # Den API-Schlüssel liest der Client selbst aus OPENAI_API_KEY.
+    client = OpenAI(base_url=BASE_URL)
 
-    # temperature=0: möglichst faktentreue, reproduzierbare Antworten -
-    # genau das will man bei Q&A über eine feste Wissensbasis.
-    llm = ChatOpenAI(model=CHAT_MODEL, base_url=BASE_URL, temperature=0)
+    index, bloecke = index_aufbauen(client)
 
     print(f"Chat-Modell: {CHAT_MODEL} | Embedding-Modell: {EMBEDDING_MODEL}")
     print('Beispiel: "Wer hat den Begriff RAG geprägt?" - beenden mit "exit"\n')
@@ -171,7 +183,7 @@ def main() -> None:
             break
 
         try:
-            antwort = frage_beantworten(vektorspeicher, llm, frage)
+            antwort = frage_beantworten(index, bloecke, client, frage)
         except Exception as fehler:  # z. B. Server nicht erreichbar
             print(f"  Fehler bei der Anfrage: {fehler}\n")
             continue

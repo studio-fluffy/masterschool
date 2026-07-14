@@ -8,3 +8,10 @@ numpy
 python-dotenv
 langfuse
 sentence-transformers
+langchain
+langchain-community 
+langchain-openai 
+chromadb 
+sentence-transformers 
+pypdf 
+unstructured

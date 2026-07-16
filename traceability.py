@@ -32,7 +32,7 @@ from langfuse import get_client, observe, propagate_attributes
 langfuse = get_client()
 model = os.getenv("LLM_MODEL", "gpt-4o-mini")
 
-@observe(name="step-greeting")       # Kind-Span: Begrüßung
+@observe(name="step-greeting")       # Type-Span: Begrüßung
 def greet_and_collect_name(customer_message: str) -> str:
     response = openai.chat.completions.create(
         model=model,
@@ -92,7 +92,7 @@ def route_to_department(transcript: str) -> RoutingDecision:
 def handle_call():
     session_id = uuid.uuid4().hex[:8]
     with propagate_attributes(session_id=session_id):
-        opening = input("Mieter: ").strip()
+        opening = input("Wie kann ich ihnen helfen?: ").strip()
         greeting = greet_and_collect_name(opening)
         print(f"Agent: {greeting}")
 

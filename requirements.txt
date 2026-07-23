@@ -11,7 +11,12 @@ sentence-transformers
 langchain
 langchain-community 
 langchain-openai 
-chromadb 
-sentence-transformers 
-pypdf 
+chromadb
+pypdf
 unstructured
+pandas
+matplotlib
+seaborn
+scikit-learn
+scipy
+notebook

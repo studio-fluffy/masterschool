@@ -5,7 +5,7 @@ response = chat(
     messages=[
         {
             "role": "user",
-            "content": "Erkläre neuronale Netze in 2 Sätzen"
+            "content": "wie funktioniert quantisierung bei llms? Erkläre in 2 sätzen"
         }
     ]
 )

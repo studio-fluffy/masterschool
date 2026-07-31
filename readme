@@ -15,3 +15,22 @@ LANGFUSE_HOST=https://cloud.langfuse.com
 
 # Embeddings
 [WordEmbeddingDemoHighDimension](https://www.cs.cmu.edu/~dst/WordEmbeddingDemo/)
+
+
+
+# slides
+### Datascience 101
+https://docs.google.com/presentation/d/e/2PACX-1vTDed_tPajn2Q1CZs8N4AuUT8S7QAYEbTO3Y_JYdd_R7aMJ0bxP-YG-4a9ArXq64A/pub?start=false&loop=false&delayms=3000
+
+### local llm
+https://docs.google.com/presentation/d/e/2PACX-1vRUObsy7jPROtXiyOzQO-99bVUplOFngVGCfp88A1c7cz9c6Muwve6lskTtFKrJYQ/pub?start=false&loop=false&delayms=3000
+
+## Rag
+### Intro to RAG
+https://docs.google.com/presentation/d/e/2PACX-1vQ2Rh9QAzme5UA__fwP4g68tpPCDN_bk364bUCZfyTdRQP9VnX2G_YmbBV2mKuIRoejfrn0Bupr756W/pub?start=false&loop=false&delayms=3000
+
+### Ingestion
+https://docs.google.com/presentation/d/e/2PACX-1vRZsbxgqOBtU7lv0t_paw7Aadn7zHnW75Q8eMOsPqcyFd178SJcX34kgvQYlHFGCg/pub?start=false&loop=false&delayms=3000
+
+### retrivieval
+https://docs.google.com/presentation/d/e/2PACX-1vSIfy0KKNF2jOrw9iZ3oYrfzGWWqGcVawVkXAfcLxgpZfxhYPAkRM7pUd14hNHNzQ/pub?start=false&loop=false&delayms=3000

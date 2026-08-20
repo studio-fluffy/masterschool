@@ -1,3 +1,62 @@
+"""Hausverwaltungs-Chatbot mit Langfuse-Tracing.
+
+Ablauf eines Anrufs (handle_call, ein Trace pro Session):
+1. Begrüßung (step-greeting): Der Mieter schildert sein Anliegen. Aufruf via
+   openai.chat.completions.create mit System-Prompt "Empfangskraft" und der
+   Mieter-Nachricht als User-Message; Rückgabe ist der freie Antworttext
+   (str) aus response.choices[0].message.content.
+2. Verifizierung (step-auth): Name und Adresse werden abgefragt; ein
+   Sub-Span prüft das Adressformat. Aufruf via
+   openai.beta.chat.completions.parse mit response_format=AuthResult —
+   das LLM muss also JSON passend zum Pydantic-Modell liefern. Rückgabe
+   ist ein AuthResult (verified: bool, customer_name, reason) aus
+   response.choices[0].message.parsed. Bei verified=False endet der
+   Anruf mit dem Tag "auth-failed".
+3. Routing (step-routing): Das Gesprächstranskript (Eröffnung, Name,
+   Adresse, Anliegen) geht als User-Message an
+   openai.beta.chat.completions.parse mit response_format=RoutingDecision;
+   der System-Prompt enthält die fünf Abteilungen. Rückgabe ist eine
+   RoutingDecision (department, routing_reason, issue_summary, confidence).
+4. Das Routing-Ergebnis wird als Tags/Metadaten an den Trace gehängt und
+   dem Mieter ausgegeben.
+
+Alle Aufrufe nutzen das Modell aus der Env-Variable LLM_MODEL
+(Default: gpt-4o-mini).
+
+Wichtig: Die LLM-Aufrufe sind zustandslos und bekommen die Ausgaben der
+vorherigen LLMs NICHT als Kontext. Jeder Aufruf erhält nur die rohen
+Nutzereingaben: die Begrüßungsantwort wird nur ausgegeben, das Routing
+sieht weder greeting noch AuthResult.reason — sein Transkript wird in
+handle_call aus opening, name, address und issue zusammengebaut.
+
+    opening = input(Anliegen)
+            │
+            ▼
+    ┌─────────────────────┐  LLM-Input: opening
+    │ 1. step-greeting    │────────────────────▶ greeting (str)
+    └─────────────────────┘                      nur print, wird nicht
+            │                                    weitergereicht
+    name, address = input(...)
+            ▼
+    ┌─────────────────────┐  LLM-Input: "Name: {name}\nAdresse: {address}"
+    │ 2. step-auth        │────────────────────▶ AuthResult
+    └─────────────────────┘                      genutzt: verified (Abbruch?),
+            │                                    customer_name (Anrede)
+      verified? ──nein──▶ Ende (Tag "auth-failed")
+            │ ja
+    issue = input(Anliegen konkret)
+            ▼
+    ┌─────────────────────┐  LLM-Input: transcript =
+    │ 3. step-routing     │  opening + name + address + issue
+    └─────────────────────┘────────────────────▶ RoutingDecision
+            │
+            ▼
+    4. Tags/Metadaten an Trace, Ausgabe an Mieter
+
+Alle OpenAI-Aufrufe werden über den Langfuse-Wrapper automatisch getraced;
+propagate_attributes verknüpft die Schritte über eine gemeinsame session_id.
+"""
+
 import os
 import uuid
 from dotenv import load_dotenv
@@ -13,16 +72,19 @@ DEPARTMENTS = {
     "repairs-maintenance": "Reparaturen & Instandhaltung — defekte Einrichtungen, Gebäudeschäden, allgemeine Reparaturen",
 }
 
+# Ergebnis von Schritt 2 (verify_tenant). Wird dort als response_format an die
+# API übergeben — das Modell muss also JSON liefern, das genau hierher passt.
 class AuthResult(BaseModel):
-    verified: bool
-    customer_name: str
-    reason: str
+    verified: bool         # steuert den Ablauf: bei False bricht handle_call ab (Tag "auth-failed")
+    customer_name: str     # nur für die Anrede im Gespräch und als Trace-Metadatum
+    reason: str            # Begründung des Modells; wird nirgends ausgewertet, nur getraced
 
+# Ergebnis von Schritt 3 (route_to_department), ebenfalls per response_format erzwungen.
 class RoutingDecision(BaseModel):
-    department: str        # einer der fünf Schlüssel oben
-    routing_reason: str    # warum diese Abteilung — wichtig für spätere Analysen
-    issue_summary: str
-    confidence: str        # "niedrig" / "mittel" / "hoch"
+    department: str        # einer der fünf Schlüssel oben; dient als DEPARTMENTS-Lookup und als Trace-Tag
+    routing_reason: str    # warum diese Abteilung — wird ausgegeben und als Metadatum gespeichert
+    issue_summary: str     # Kurzfassung des Anliegens; aktuell ungenutzt, nur im Trace sichtbar
+    confidence: str        # "niedrig" / "mittel" / "hoch"; wird zum Tag "confidence-<wert>"
 
 
 # Der LangFuse-Wrapper fängt alle OpenAI-Aufrufe ab und traced sie automatisch

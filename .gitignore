@@ -4,3 +4,5 @@
 .vscode/
 __pycache__/
 chroma_db/
+outputs_genvis/
+week4_video_work/
